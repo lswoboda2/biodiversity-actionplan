@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biodiversity Action Plan Dashboard</title>
+    
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    
+    <style>
+        :root {
+            --primary-color: #28a745;
+            --secondary-color: #6c757d;
+            --light-gray: #f8f9fa;
+            --border-color: #dee2e6;
+            --card-shadow: 0 4px 8px rgba(0,0,0,0.05);
+            --status-achieved: #d4edda;
+            --status-underway: #fff3cd;
+            --status-not-started: #f8d7da;
+        }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            margin: 0; padding: 2em; color: #333; background-color: #f4f7f6; 
+        }
+        h1, h2 { 
+            color: #212529; border-bottom: 2px solid var(--primary-color); 
+            padding-bottom: 0.3em; margin-top: 1.5em; margin-bottom: 1em; 
+        }
+        .card { 
+            background-color: #fff; padding: 1.5em; border-radius: 8px; 
+            box-shadow: var(--card-shadow); margin-bottom: 1.5em; position: relative;
+        }
+        .loading-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.8); display: flex; justify-content: center; 
+            align-items: center; z-index: 10; font-style: italic; color: #666;
+        }
+        .stats-grid { 
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5em; 
+        }
+        .stat-card { text-align: center; }
+        .stat-card h4 { margin: 0 0 0.5em 0; color: var(--secondary-color); font-weight: 600; }
+        .stat-card p { margin: 0; font-size: 2.2em; font-weight: bold; color: var(--primary-color); }
+        .stat-card .percentage { font-size: 1.2em; color: var(--secondary-color); }
+        .filter-bar { 
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5em; align-items: flex-end;
+        }
+        .filter-group label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 0.9em; }
+        .filter-select, .filter-select-multi { width: 100%; }
+        #clear-filters {
+            width: 100%; background-color: var(--secondary-color); color: white; 
+            border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        #clear-filters:hover { background-color: #5a6268; }
+        .table-wrapper { width: 100%; overflow-x: auto; }
+        table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+        th, td { border: 1px solid var(--border-color); padding: 10px; text-align: left; }
+        th { background-color: var(--light-gray); position: sticky; top: 0; z-index: 1; }
+        td { background-color: #fff; }
+        tr.status-achieved-and-ongoing td { background-color: var(--status-achieved); }
+        tr.status-underway td { background-color: var(--status-underway); }
+        tr.status-not-started td { background-color: var(--status-not-started); }
+        .species-tag {
+            display: inline-block; padding: 0.2em 0.6em; margin: 2px;
+            font-size: 0.85em; font-weight: 600; border-radius: 10px;
+            color: #fff; background-color: #007bff;
+        }
+        .species-tag.tag-bat { background-color: #6f42c1; }
+        .species-tag.tag-bird { background-color: #fd7e14; }
+        .species-tag.tag-mammal { background-color: #dc3545; }
+        .species-tag.tag-invertebrate { background-color: #20c997; }
+        .species-tag.tag-plants { background-color: #28a745; }
+        .species-tag.tag-invasive { background-color: #343a40; }
+        .species-tag.tag-all { background-color: #6c757d; }
+        
+        /* **NEW** Pagination Styles */
+        .pagination {
+            display: flex; justify-content: center; align-items: center;
+            gap: 1em; padding: 1.5em 0 0.5em 0;
+        }
+        .pagination button {
+            background-color: var(--primary-color); color: white; border: none;
+            padding: 8px 15px; border-radius: 5px; cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .pagination button:hover:not(:disabled) { background-color: #218838; }
+        .pagination button:disabled { background-color: #aaa; cursor: not-allowed; }
+        .pagination span { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Biodiversity Action Plan Dashboard</h1>
+
+    <h2>Summary</h2>
+    <div class="card">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h4>Total Actions</h4>
+                <p id="total-actions">...</p>
+            </div>
+            <div class="stat-card">
+                <h4>Achieved & Ongoing</h4>
+                <p id="achieved-count">...</p>
+                <span class="percentage" id="achieved-percent"></span>
+            </div>
+            <div class="stat-card">
+                <h4>Underway</h4>
+                <p id="underway-count">...</p>
+                <span class="percentage" id="underway-percent"></span>
+            </div>
+            <div class="stat-card">
+                <h4>Not Started</h4>
+                <p id="not-started-count">...</p>
+                <span class="percentage" id="not-started-percent"></span>
+            </div>
+        </div>
+    </div>
+
+    <h2>Filter Actions</h2>
+    <div class="card filter-bar">
+        <div class="filter-group">
+            <label for="status-filter">Status</label>
+            <select id="status-filter" class="filter-select"></select>
+        </div>
+        <div class="filter-group">
+            <label for="species-filter">Affected Species</label>
+            <select id="species-filter" class="filter-select-multi" multiple="multiple"></select>
+        </div>
+        <div class="filter-group">
+            <label for="strategy-filter">Strategy 2025</label>
+            <select id="strategy-filter" class="filter-select"></select>
+        </div>
+        <div class="filter-group">
+            <label for="timescale-filter">Timescale</label>
+            <select id="timescale-filter" class="filter-select"></select>
+        </div>
+        <div class="filter-group">
+            <label for="implementation-filter">Implementation</label>
+            <select id="implementation-filter" class="filter-select"></select>
+        </div>
+        <div class="filter-group">
+            <label for="impact-filter">Impact</label>
+            <select id="impact-filter" class="filter-select"></select>
+        </div>
+        <div class="filter-group">
+            <label for="priority-filter">Priority 2025</label>
+            <select id="priority-filter" class="filter-select"></select>
+        </div>
+        <div class="filter-group">
+            <button id="clear-filters">Clear Filters</button>
+        </div>
+    </div>
+
+    <h2>Action Plan Details</h2>
+    <div class="card" id="table-card">
+        <div class="table-wrapper">
+            <table id="actions-table">
+                <thead>
+                    <tr>
+                        <th>Status</th><th>Action</th><th>Area</th><th>SMART</th>
+                        <th>Lead Contact</th><th>Responsible</th><th>Strategy 2025</th>
+                        <th>Timescale</th><th>Implementation</th><th>Impact</th>
+                        <th>Priority 2025</th>
+                        <th>Affected Species</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <!-- **NEW** Pagination Container -->
+        <div class="pagination" id="pagination-container"></div>
+        <div class="loading-overlay" style="display: none;"><span>Loading...</span></div>
+    </div>
+
+<script>
+$(document).ready(function() {
+    const API_BASE_URL = "http://127.0.0.1:8000";
+    let currentPage = 1; // **NEW** Global state for current page
+
+    function initializeDashboard() {
+        $('.filter-select').select2({ width: '100%', placeholder: 'All', allowClear: true });
+        $('.filter-select-multi').select2({ width: '100%', placeholder: 'Any' });
+
+        $('.filter-select, .filter-select-multi').on('change', () => {
+            currentPage = 1; // Reset to first page on filter change
+            updateDashboard();
+        });
+        $('#clear-filters').on('click', handleClearFilters);
+
+        populateFilterOptions();
+        updateDashboard();
+    }
+
+    function getActiveFilters() {
+        const speciesVal = $('#species-filter').val();
+        return {
+            status: $('#status-filter').val(),
+            strategy: $('#strategy-filter').val(),
+            timescale: $('#timescale-filter').val(),
+            implementation: $('#implementation-filter').val(),
+            impact: $('#impact-filter').val(),
+            priority: $('#priority-filter').val(),
+            species: speciesVal && speciesVal.length > 0 ? speciesVal.join(',') : null,
+        };
+    }
+
+    function populateFilterOptions() {
+        $.get(`${API_BASE_URL}/api/filter-options`).done(data => {
+            const populate = (selector, options, isMulti = false) => {
+                const select = $(selector);
+                if (!isMulti) {
+                    select.empty().append(new Option('All', '', false, false));
+                } else {
+                    select.empty();
+                }
+                options.forEach(opt => {
+                    select.append(new Option(opt, opt));
+                });
+            };
+            populate('#status-filter', data.status);
+            populate('#strategy-filter', data.strategy);
+            populate('#timescale-filter', data.timescale);
+            populate('#implementation-filter', data.implementation);
+            populate('#impact-filter', data.impact);
+            populate('#priority-filter', data.priority);
+            populate('#species-filter', data.species, true);
+        }).fail(err => console.error("Failed to load filter options:", err));
+    }
+
+    function updateDashboard() {
+        const filters = getActiveFilters();
+        setLoadingState(true);
+
+        $.get(`${API_BASE_URL}/api/actions`, { ...filters, page: currentPage }).done(data => {
+            updateSummaryStats(data.summary_stats);
+            populateTable(data.actions);
+            updatePagination(data.pagination); 
+        }).fail(err => {
+            console.error("Failed to update dashboard:", err);
+            alert("Error: Could not load data from the server.");
+        }).always(() => {
+            setLoadingState(false);
+        });
+    }
+
+    function setLoadingState(isLoading) {
+        const overlay = $('#table-card .loading-overlay');
+        if (isLoading) {
+            overlay.show();
+        } else {
+            overlay.hide();
+        }
+    }
+
+    function updateSummaryStats(stats) {
+        $('#total-actions').text(stats.total_actions.toLocaleString());
+        $('#achieved-count').text(stats.status_counts['Achieved and ongoing'].toLocaleString());
+        $('#achieved-percent').text(`(${stats.status_percentages['Achieved and ongoing']}%)`);
+        $('#underway-count').text(stats.status_counts['Underway'].toLocaleString());
+        $('#underway-percent').text(`(${stats.status_percentages['Underway']}%)`);
+        $('#not-started-count').text(stats.status_counts['Not started'].toLocaleString());
+        $('#not-started-percent').text(`(${stats.status_percentages['Not started']}%)`);
+    }
+
+    function populateTable(actions) {
+        const tableBody = $('#actions-table tbody');
+        tableBody.empty();
+
+        if (!actions || actions.length === 0) {
+            tableBody.append('<tr><td colspan="12" style="text-align:center;">No actions match the selected criteria.</td></tr>');
+            return;
+        }
+
+        actions.forEach(row => {
+            const statusClass = 'status-' + (row.Status || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            const val = (data) => data || '';
+
+            let speciesTagsHtml = '';
+            if (row.affected_species && row.affected_species.length > 0) {
+                speciesTagsHtml = row.affected_species.map(s => 
+                    `<span class="species-tag tag-${s}">${s}</span>`
+                ).join('');
+            }
+
+            const tableRow = `
+                <tr class="${statusClass}">
+                    <td>${val(row.Status)}</td>
+                    <td>${val(row.Action)}</td>
+                    <td>${val(row.Area)}</td>
+                    <td>${val(row.SMART)}</td>
+                    <td>${val(row.lead_contact)}</td>
+                    <td>${val(row.Responsible)}</td>
+                    <td>${val(row['Strategy 2025'])}</td>
+                    <td>${val(row.Timescale)}</td>
+                    <td>${val(row.implementation_ranking)}</td>
+                    <td>${val(row.Impact)}</td>
+                    <td>${val(row.priority_2025)}</td>
+                    <td>${speciesTagsHtml}</td>
+                </tr>
+            `;
+            tableBody.append(tableRow);
+        });
+    }
+
+    function updatePagination(pagination) {
+        const container = $('#pagination-container');
+        container.empty();
+
+        if (pagination.total_pages <= 1) {
+            return; 
+        }
+
+        const { page, total_pages } = pagination;
+
+        const firstButton = $('<button>First</button>').on('click', () => {
+            currentPage = 1;
+            updateDashboard();
+        }).prop('disabled', page === 1);
+
+        const prevButton = $('<button>Previous</button>').on('click', () => {
+            currentPage--;
+            updateDashboard();
+        }).prop('disabled', page === 1);
+
+        const nextButton = $('<button>Next</button>').on('click', () => {
+            currentPage++;
+            updateDashboard();
+        }).prop('disabled', page === total_pages);
+
+        const lastButton = $('<button>Last</button>').on('click', () => {
+            currentPage = total_pages;
+            updateDashboard();
+        }).prop('disabled', page === total_pages);
+
+        const pageInfo = `<span>Page ${page} of ${total_pages}</span>`;
+
+        container.append(firstButton, prevButton, pageInfo, nextButton, lastButton);
+    }
+
+    function handleClearFilters() {
+        currentPage = 1;
+        $('.filter-select, .filter-select-multi').val(null).trigger('change');
+    }
+
+    initializeDashboard();
+});
+</script>
+</body>
+</html>
