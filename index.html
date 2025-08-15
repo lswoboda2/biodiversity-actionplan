@@ -171,22 +171,21 @@
                 <tbody></tbody>
             </table>
         </div>
-        <!-- **NEW** Pagination Container -->
         <div class="pagination" id="pagination-container"></div>
         <div class="loading-overlay" style="display: none;"><span>Loading...</span></div>
     </div>
 
 <script>
 $(document).ready(function() {
-    const API_BASE_URL = "http://127.0.0.1:8000";
-    let currentPage = 1; // **NEW** Global state for current page
+    const API_BASE_URL = "https://biodiversity-actionplan-dashboard.onrender.com";
+    let currentPage = 1; 
 
     function initializeDashboard() {
         $('.filter-select').select2({ width: '100%', placeholder: 'All', allowClear: true });
         $('.filter-select-multi').select2({ width: '100%', placeholder: 'Any' });
 
         $('.filter-select, .filter-select-multi').on('change', () => {
-            currentPage = 1; // Reset to first page on filter change
+            currentPage = 1; 
             updateDashboard();
         });
         $('#clear-filters').on('click', handleClearFilters);
