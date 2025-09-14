@@ -3,13 +3,10 @@ import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 from math import ceil
 
-app = FastAPI(
-    title="Biodiversity Action Plan Dashboard",
-    version="1.0.0",
-)
+app = FastAPI(title="Biodiversity Action Plan Dashboard", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,59 +16,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA_PATH = Path(__file__).parent / "data"
-XLSX_FILE_NAME = "Biodiversity Action Plan Master copy.xlsx"
+DATA_XLSX = Path(__file__).parent / "data" / "source.xlsx"
 _cached_df = None
+_cached_mtime = None
 
 SPECIES_COLUMNS = [
-    'all', 'invertebrate', 'bat', 'mammal', 'bird', 'amphibians',
-    'reptiles', 'invasive', 'plants', 'freshwater', 'coastal'
+    "all", "invertebrate", "bat", "mammal", "bird", "amphibians",
+    "reptiles", "invasive", "plants", "freshwater", "coastal"
 ]
 
-def clean_column_names(df):
-    """Standardizes column names for easier use."""
-    cols = df.columns
-    new_cols = [col.strip() for col in cols]
-    df.columns = new_cols
+def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    df.columns = [str(col).strip() for col in df.columns]
     df = df.rename(columns={
         "Priority 2025 (3 high, 1 low)": "priority_2025",
         "Lead Contact  (provisional)": "lead_contact",
-        "Implementation ranking": "implementation_ranking"
+        "Implementation ranking": "implementation_ranking",
     })
+    if "priority_2025" in df.columns:
+        df["priority_2025"] = pd.to_numeric(df["priority_2025"], errors="coerce")
+    return df
+
+def _load_dataframe_from_disk() -> pd.DataFrame:
+    if not DATA_XLSX.exists():
+        raise HTTPException(status_code=500, detail=f"Data file not found: {DATA_XLSX.name}")
+    df = pd.read_excel(DATA_XLSX, engine="openpyxl", skiprows=1)
+    df = clean_column_names(df)
+    if "Action" in df.columns:
+        df = df.dropna(subset=["Action"])
+    if "Status" in df.columns:
+        df["Status"] = df["Status"].astype(str).str.strip().str.lower().str.capitalize()
+    # Build affected species list
+    def get_affected_species(row):
+        return [col for col in SPECIES_COLUMNS if row.get(col) == 1]
+    df["affected_species"] = df.apply(get_affected_species, axis=1)
     return df
 
 def get_dataframe() -> pd.DataFrame:
-    """
-    Loads the XLSX file into a pandas DataFrame, cleans it, and caches it.
-    """
-    global _cached_df
-    if _cached_df is not None:
-        return _cached_df
-
-    file_path = DATA_PATH / XLSX_FILE_NAME
-    if not file_path.exists():
-        raise HTTPException(status_code=500, detail=f"Data file not found: {XLSX_FILE_NAME}")
-
+    global _cached_df, _cached_mtime
     try:
-        df = pd.read_excel(file_path, engine='openpyxl', skiprows=1)
-        df = clean_column_names(df)
-        df.dropna(subset=['Action'], inplace=True)
-
-        if 'Status' in df.columns:
-            df['Status'] = df['Status'].str.strip().str.lower().str.capitalize()
-            df['Status'] = df['Status'].replace({'Achieved and ongoing': 'Achieved and ongoing'})
-
-        def get_affected_species(row):
-            species_list = [col for col in SPECIES_COLUMNS if row.get(col) == 1]
-            return species_list
-        
-        df['affected_species'] = df.apply(get_affected_species, axis=1)
-        
-        _cached_df = df
-        print("Data loaded and cached successfully.")
-        return _cached_df
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing Excel file: {e}")
+        mtime = DATA_XLSX.stat().st_mtime
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail=f"Data file not found: {DATA_XLSX.name}")
+    if _cached_df is None or _cached_mtime != mtime:
+        _cached_df = _load_dataframe_from_disk()
+        _cached_mtime = mtime
+    return _cached_df
 
 def apply_filters(
     df: pd.DataFrame,
@@ -83,49 +72,35 @@ def apply_filters(
     priority: Optional[str] = None,
     species: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Applies all active filters to the DataFrame."""
-    query_df = df.copy()
+    q = df.copy()
     if status:
-        query_df = query_df[query_df['Status'] == status]
+        q = q[q.get("Status") == status]
     if strategy:
-        query_df = query_df[query_df['Strategy 2025'] == strategy]
+        q = q[q.get("Strategy 2025") == strategy]
     if timescale:
-        query_df = query_df[query_df['Timescale'] == timescale]
+        q = q[q.get("Timescale") == timescale]
     if implementation:
-        query_df = query_df[query_df['implementation_ranking'] == implementation]
+        q = q[q.get("implementation_ranking") == implementation]
     if impact:
-        query_df = query_df[query_df['Impact'] == impact]
+        q = q[q.get("Impact") == impact]
     if priority:
         try:
-            query_df = query_df[query_df['priority_2025'] == float(priority)]
+            q = q[q.get("priority_2025") == float(priority)]
         except (ValueError, TypeError):
             pass
-            
     if species:
-        selected_species = species.split(',')
-        query_df = query_df[query_df['affected_species'].apply(lambda lst: any(s in lst for s in selected_species))]
-
-    return query_df
+        selected = [s.strip() for s in species.split(",") if s.strip()]
+        if selected:
+            q = q[q["affected_species"].apply(lambda lst: any(s in lst for s in selected))]
+    return q
 
 def get_summary_stats(df: pd.DataFrame) -> dict:
-    """Calculates summary statistics for the given DataFrame."""
-    total_actions = len(df)
-    status_counts = df['Status'].value_counts().to_dict()
-
-    for status_key in ['Achieved and ongoing', 'Underway', 'Not started']:
-        if status_key not in status_counts:
-            status_counts[status_key] = 0
-
-    status_percentages = {
-        key: round((value / total_actions) * 100, 1) if total_actions > 0 else 0
-        for key, value in status_counts.items()
-    }
-
-    return {
-        "total_actions": total_actions,
-        "status_counts": status_counts,
-        "status_percentages": status_percentages,
-    }
+    total = len(df)
+    counts = df["Status"].value_counts().to_dict() if "Status" in df.columns else {}
+    for k in ["Achieved and ongoing", "Underway", "Not started"]:
+        counts.setdefault(k, 0)
+    pct = {k: round((v / total) * 100, 1) if total else 0 for k, v in counts.items()}
+    return {"total_actions": total, "status_counts": counts, "status_percentages": pct}
 
 @app.get("/")
 def read_root():
@@ -133,18 +108,17 @@ def read_root():
 
 @app.get("/api/filter-options")
 def get_filter_options():
-    """Returns a dictionary of unique values for each filter dropdown."""
     df = get_dataframe()
-    options = {
-        "status": sorted(df['Status'].dropna().unique().tolist()),
-        "strategy": sorted(df['Strategy 2025'].dropna().unique().tolist()),
-        "timescale": sorted(df['Timescale'].dropna().unique().tolist()),
-        "implementation": sorted(df['implementation_ranking'].dropna().unique().tolist()),
-        "impact": sorted(df['Impact'].dropna().unique().tolist()),
-        "priority": sorted([str(int(p)) for p in df['priority_2025'].dropna().unique()]),
+    opt = {
+        "status": sorted(df["Status"].dropna().unique().tolist()) if "Status" in df.columns else [],
+        "strategy": sorted(df["Strategy 2025"].dropna().unique().tolist()) if "Strategy 2025" in df.columns else [],
+        "timescale": sorted(df["Timescale"].dropna().unique().tolist()) if "Timescale" in df.columns else [],
+        "implementation": sorted(df["implementation_ranking"].dropna().unique().tolist()) if "implementation_ranking" in df.columns else [],
+        "impact": sorted(df["Impact"].dropna().unique().tolist()) if "Impact" in df.columns else [],
+        "priority": sorted([str(int(p)) for p in df["priority_2025"].dropna().unique()]) if "priority_2025" in df.columns else [],
         "species": SPECIES_COLUMNS,
     }
-    return options
+    return opt
 
 @app.get("/api/actions")
 def get_actions(
@@ -158,32 +132,27 @@ def get_actions(
     page: int = 1,
     page_size: int = 10,
 ):
-    """
-    Returns the filtered and paginated list of actions and dynamic summary statistics.
-    """
     df = get_dataframe()
-    filtered_df = apply_filters(df, status, strategy, timescale, implementation, impact, priority, species)
-    
-    summary_stats = get_summary_stats(filtered_df)
-    
-    total_records = len(filtered_df)
-    total_pages = ceil(total_records / page_size)
-    
-    start_index = (page - 1) * page_size
-    end_index = start_index + page_size
-    paginated_df = filtered_df.iloc[start_index:end_index]
+    filtered = apply_filters(df, status, strategy, timescale, implementation, impact, priority, species)
+    stats = get_summary_stats(filtered)
 
-    df_to_send = paginated_df.drop(columns=SPECIES_COLUMNS, errors='ignore')
-    cleaned_df = df_to_send.astype(object).where(pd.notnull(df_to_send), None)
-    actions_list = cleaned_df.to_dict(orient='records')
+    total_records = len(filtered)
+    total_pages = ceil(total_records / page_size) if page_size > 0 else 1
+    start = max(0, (page - 1) * page_size)
+    end = start + page_size
+    page_df = filtered.iloc[start:end] if page_size > 0 else filtered
+
+    out_df = page_df.drop(columns=SPECIES_COLUMNS, errors="ignore")
+    cleaned = out_df.astype(object).where(pd.notnull(out_df), None)
+    actions = cleaned.to_dict(orient="records")
 
     return {
-        "summary_stats": summary_stats,
+        "summary_stats": stats,
         "pagination": {
             "page": page,
             "page_size": page_size,
             "total_records": total_records,
             "total_pages": total_pages,
         },
-        "actions": actions_list,
+        "actions": actions,
     }
