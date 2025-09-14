@@ -1,0 +1,47 @@
+name: Receive Excel from Drive
+
+on:
+  repository_dispatch:
+    types: [new-excel-file]   
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Google client libs
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+
+      - name: Write Drive credentials
+        run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
+
+      - name: Download Excel by fileId -> data/source.xlsx
+        env:
+          FILE_ID: ${{ github.event.client_payload.file_id }}
+        run: |
+          mkdir -p data
+          python download_from_gdrive.py "$FILE_ID" "data/source.xlsx"
+
+      - name: Commit if changed
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add data/source.xlsx
+          if git diff --staged --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore: update data/source.xlsx from Drive"
+            git push
+          fi
