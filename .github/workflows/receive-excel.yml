@@ -2,7 +2,7 @@ name: Receive Excel from Drive
 
 on:
   repository_dispatch:
-    types: [new-excel-file]   
+    types: [new-excel-file]
 
 jobs:
   sync:
@@ -25,7 +25,14 @@ jobs:
           pip install google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
 
       - name: Write Drive credentials
-        run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
+        run: |
+          printf '%s' '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
+          test -s gdrive-credentials.json || (echo "ERROR: GDRIVE_CREDENTIALS_DATA is empty"; exit 1)
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${{ github.workspace }}/gdrive-credentials.json" >> $GITHUB_ENV
+
+      - name: Check inputs
+        run: |
+          test -n "${{ github.event.client_payload.file_id }}" || (echo "ERROR: missing client_payload.file_id"; exit 1)
 
       - name: Download Excel by fileId -> data/source.xlsx
         env:
