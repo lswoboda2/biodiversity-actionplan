@@ -16,6 +16,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.head("/")
+def read_root_head():
+    return Response(status_code=200)
+
 DATA_XLSX = Path(__file__).parent / "data" / "source.xlsx"
 _cached_df = None
 _cached_mtime = None
