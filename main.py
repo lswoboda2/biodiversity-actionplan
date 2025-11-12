@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from typing import Optional
@@ -16,55 +16,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.head("/")
-def read_root_head():
-    return Response(status_code=200)
-
-DATA_XLSX = Path(__file__).parent / "data" / "source.xlsx"
+DATA_PARQUET = Path(__file__).parent / "data" / "source.parquet"
 _cached_df = None
-_cached_mtime = None
 
 SPECIES_COLUMNS = [
     "all", "invertebrate", "bat", "mammal", "bird", "amphibians",
     "reptiles", "invasive", "plants", "freshwater", "coastal"
 ]
 
-def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
-    df.columns = [str(col).strip() for col in df.columns]
-    df = df.rename(columns={
-        "Priority 2025 (3 high, 1 low)": "priority_2025",
-        "Lead Contact  (provisional)": "lead_contact",
-        "Implementation ranking": "implementation_ranking",
-    })
-    if "priority_2025" in df.columns:
-        df["priority_2025"] = pd.to_numeric(df["priority_2025"], errors="coerce")
+def _load_dataframe_from_disk() -> pd.DataFrame:
+    if not DATA_PARQUET.exists():
+        raise RuntimeError(f"Data file not found: {DATA_PARQUET.name}. Please trigger the GitHub Action.")
+    
+    df = pd.read_parquet(DATA_PARQUET)
     return df
 
-def _load_dataframe_from_disk() -> pd.DataFrame:
-    if not DATA_XLSX.exists():
-        raise HTTPException(status_code=500, detail=f"Data file not found: {DATA_XLSX.name}")
-    df = pd.read_excel(DATA_XLSX, engine="openpyxl", skiprows=1)
-    df = clean_column_names(df)
-    if "Action" in df.columns:
-        df = df.dropna(subset=["Action"])
-    if "Status" in df.columns:
-        df["Status"] = df["Status"].astype(str).str.strip().str.lower().str.capitalize()
-    # Build affected species list
-    def get_affected_species(row):
-        return [col for col in SPECIES_COLUMNS if row.get(col) == 1]
-    df["affected_species"] = df.apply(get_affected_species, axis=1)
-    return df
+@app.on_event("startup")
+def load_data_on_startup():
+    global _cached_df
+    try:
+        _cached_df = _load_dataframe_from_disk()
+        print(f"Successfully loaded {DATA_PARQUET.name} into cache.")
+    except Exception as e:
+        print(f"FATAL: Failed to load data on startup: {e}")
+        _cached_df = None
 
 def get_dataframe() -> pd.DataFrame:
-    global _cached_df, _cached_mtime
-    try:
-        mtime = DATA_XLSX.stat().st_mtime
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail=f"Data file not found: {DATA_XLSX.name}")
-    if _cached_df is None or _cached_mtime != mtime:
-        _cached_df = _load_dataframe_from_disk()
-        _cached_mtime = mtime
+    global _cached_df
+    if _cached_df is None:
+        raise HTTPException(status_code=503, detail="Service unavailable: Data is not loaded.")
     return _cached_df
+
+@app.head("/")
+def read_root_head():
+    return Response(status_code=200)
 
 def apply_filters(
     df: pd.DataFrame,
@@ -92,10 +77,15 @@ def apply_filters(
             q = q[q.get("priority_2025") == float(priority)]
         except (ValueError, TypeError):
             pass
+            
     if species:
         selected = [s.strip() for s in species.split(",") if s.strip()]
         if selected:
-            q = q[q["affected_species"].apply(lambda lst: any(s in lst for s in selected))]
+            valid_selected_species = [s for s in selected if s in SPECIES_COLUMNS and s in q.columns]
+            
+            if valid_selected_species:
+                query_str = " | ".join([f"`{s}` == 1" for s in valid_selected_species])
+                q = q.query(query_str)
     return q
 
 def get_summary_stats(df: pd.DataFrame) -> dict:

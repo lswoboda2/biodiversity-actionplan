@@ -3,3 +3,5 @@ uvicorn
 pandas
 openpyxl
 numpy
+gunicorn
+pyarrow
