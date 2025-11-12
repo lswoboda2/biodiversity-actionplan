@@ -24,9 +24,41 @@ SPECIES_COLUMNS = [
     "reptiles", "invasive", "plants", "freshwater", "coastal"
 ]
 
+def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    df.columns = [str(col).strip() for col in df.columns]
+    df = df.rename(columns={
+        "Priority 2025 (3 high, 1 low)": "priority_2025",
+        "Lead Contact  (provisional)": "lead_contact",
+        "Implementation ranking": "implementation_ranking",
+    })
+    if "priority_2025" in df.columns:
+        df["priority_2025"] = pd.to_numeric(df["priority_2025"], errors="coerce")
+    return df
+
+def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Runs all cleaning steps on the raw dataframe."""
+    df = clean_column_names(df)
+    
+    if "Action" in df.columns:
+        df = df.dropna(subset=["Action"])
+    if "Status" in df.columns:
+        df["Status"] = df["Status"].astype(str).str.strip().str.lower().str.capitalize()
+
+    for col in SPECIES_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        else:
+            df[col] = 0 
+            
+    species_matrix = df[SPECIES_COLUMNS].values == 1
+    species_names = np.array(SPECIES_COLUMNS)
+    df["affected_species"] = [list(species_names[row]) for row in species_matrix]
+    
+    return df
+
 def _load_dataframe_from_disk() -> pd.DataFrame:
     if not DATA_PARQUET.exists():
-        raise RuntimeError(f"Data file not found: {DATA_PARQUET.name}. Please trigger the GitHub Action.")
+        raise RuntimeError(f"Data file not found: {DATA_PARQUET.name}.")
     
     df = pd.read_parquet(DATA_PARQUET)
     return df
@@ -35,8 +67,9 @@ def _load_dataframe_from_disk() -> pd.DataFrame:
 def load_data_on_startup():
     global _cached_df
     try:
-        _cached_df = _load_dataframe_from_disk()
-        print(f"Successfully loaded {DATA_PARQUET.name} into cache.")
+        raw_df = _load_dataframe_from_disk()
+        _cached_df = preprocess_dataframe(raw_df)
+        print(f"Successfully loaded and processed {DATA_PARQUET.name} into cache.")
     except Exception as e:
         print(f"FATAL: Failed to load data on startup: {e}")
         _cached_df = None

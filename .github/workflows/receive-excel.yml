@@ -43,55 +43,8 @@ jobs:
 
       - name: Convert Excel to Parquet
         run: |
-          python -m pip install pandas openpyxl pyarrow numpy
-          python -c "
-import pandas as pd
-import numpy as np
-
-SPECIES_COLUMNS = [
-    'all', 'invertebrate', 'bat', 'mammal', 'bird', 'amphibians',
-    'reptiles', 'invasive', 'plants', 'freshwater', 'coastal'
-]
-
-def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
-    df.columns = [str(col).strip() for col in df.columns]
-    df = df.rename(columns={
-        'Priority 2025 (3 high, 1 low)': 'priority_2025',
-        'Lead Contact  (provisional)': 'lead_contact',
-        'Implementation ranking': 'implementation_ranking',
-    })
-    if 'priority_2025' in df.columns:
-        df['priority_2025'] = pd.to_numeric(df['priority_2025'], errors='coerce')
-    return df
-
-print('Starting Excel to Parquet conversion...')
-df = pd.read_excel('data/source.xlsx', engine='openpyxl', skiprows=1)
-
-df = clean_column_names(df)
-
-if 'Action' in df.columns:
-    df = df.dropna(subset=['Action'])
-else:
-    print('WARNING: "Action" column not found.')
-
-if 'Status' in df.columns:
-    df['Status'] = df['Status'].astype(str).str.strip().str.lower().str.capitalize()
-else:
-    print('WARNING: "Status" column not found.')
-
-for col in SPECIES_COLUMNS:
-    if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-    else:
-        df[col] = 0
-
-species_matrix = df[SPECIES_COLUMNS].values == 1
-species_names = np.array(SPECIES_COLUMNS)
-df['affected_species'] = [list(species_names[row]) for row in species_matrix]
-
-df.to_parquet('data/source.parquet', index=False)
-print('Successfully converted data/source.xlsx to data/source.parquet')
-"
+          python -m pip install pandas openpyxl pyarrow
+          python convert.py
 
       - name: Commit if changed
         run: |
