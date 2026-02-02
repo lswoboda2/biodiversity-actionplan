@@ -14,6 +14,9 @@ if not EXCEL_FILE.exists():
 
 df = pd.read_excel(EXCEL_FILE, engine="openpyxl", skiprows=1)
 
+if 'Notes 2026' in df.columns:
+    df['Notes 2026'] = df['Notes 2026'].astype(str)
+
 df.to_parquet(PARQUET_FILE, index=False)
 
 print(f"Successfully converted {EXCEL_FILE} to {PARQUET_FILE}")
